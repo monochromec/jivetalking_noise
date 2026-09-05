@@ -1011,7 +1011,6 @@ func (cfg *EffectiveFilterConfig) buildSilenceTrimFilter() string {
 	parts = append(parts, fmt.Sprintf("[src%d]atrim=start=%f,asetpts=PTS-STARTPTS[seg%d]",
 		segIdx, lastEnd, segIdx))
 	segLabels = append(segLabels, fmt.Sprintf("[seg%d]", segIdx))
-	segIdx++
 
 	// Build concat invocation
 	sourceLabels := make([]string, len(parts))
