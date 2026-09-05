@@ -23,10 +23,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: go vet ./...
@@ -46,8 +46,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
-      - uses: freerangebytes/setup-actionlint@v0.1.1
+      - uses: actions/checkout@v7
+      - uses: freerangebytes/setup-actionlint@v0.1.2
       - name: Run actionlint
         run: |
           echo "::add-matcher::.github/actionlint-matcher.json"
@@ -59,10 +59,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Download ffmpeg-statigo libraries
@@ -96,10 +96,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Download ffmpeg-statigo libraries
@@ -117,10 +117,10 @@ jobs:
       pull-requests: write
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@v5
         if: github.event_name == 'pull_request'
         with:
           fail-on-severity: moderate
@@ -137,7 +137,7 @@ jobs:
           output-file: govulncheck.sarif
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v4.35.3
+        uses: github/codeql-action/upload-sarif@v4.37.9
         if: always()
         with:
           sarif_file: govulncheck.sarif
@@ -184,11 +184,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Download ffmpeg-statigo libraries
@@ -218,7 +218,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Get version from tag
