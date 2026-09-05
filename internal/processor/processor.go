@@ -73,7 +73,7 @@ func AnalyzeOnlyDetailed(inputPath string, config *BaseFilterConfig,
 //
 // The output file will be named <basename>-LUFS-NN-processed.<ext> in the same directory as the input
 // If progressCallback is not nil, it will be called with progress updates
-func ProcessAudio(inputPath string, config *BaseFilterConfig, progressCallback ProgressCallback) (*ProcessingResult, error) {
+func ProcessAudio(inputPath string, config *BaseFilterConfig, force bool, progressCallback ProgressCallback) (*ProcessingResult, error) {
 	// Pass 1: Analysis
 	if progressCallback != nil {
 		progressCallback(ProgressUpdate{
@@ -100,6 +100,16 @@ func ProcessAudio(inputPath string, config *BaseFilterConfig, progressCallback P
 	effectiveConfig, diagnostics := AdaptConfig(config, measurements)
 	if effectiveConfig == nil {
 		return nil, fmt.Errorf("adaptive config failed")
+	}
+
+	// Pass silence region detection results to the filter for dynamic truncation
+	if effectiveConfig.SilenceTrim.Enabled && measurements.SilenceDetectLevel != 0 {
+		effectiveConfig.SilenceTrim.Threshold = measurements.SilenceDetectLevel
+		// Convert slice of SilenceRegion values to slice of pointers
+		effectiveConfig.SilenceRegions = make([]*SilenceRegion, len(measurements.SilenceRegions))
+		for i := range measurements.SilenceRegions {
+			effectiveConfig.SilenceRegions[i] = &measurements.SilenceRegions[i]
+		}
 	}
 
 	// Pass 2: Processing
@@ -194,7 +204,7 @@ func ProcessAudio(inputPath string, config *BaseFilterConfig, progressCallback P
 	// Rename output file to include LUFS value: <name>-processed.<ext> → <name>-LUFS-NN-processed.<ext>
 	lufsValue := int(math.Abs(result.OutputLUFS))
 	finalPath := generateLUFSOutputPath(inputPath, lufsValue, outputExt)
-	if err := renameNoClobber(outputPath, finalPath); err != nil {
+	if err := publishTempOutput(outputPath, finalPath, force); err != nil {
 		return nil, fmt.Errorf("failed to publish output: %w", err)
 	}
 	cleanupTempOutput = false

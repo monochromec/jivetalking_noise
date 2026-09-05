@@ -40,7 +40,7 @@ func TestProcessAudioMP3(t *testing.T) {
 	config := DefaultFilterConfig()
 	config.OutputFormat = "mp3"
 
-	result, err := ProcessAudio(inputPath, config, nil)
+	result, err := ProcessAudio(inputPath, config, false, nil)
 	if err != nil {
 		t.Fatalf("ProcessAudio failed: %v", err)
 	}

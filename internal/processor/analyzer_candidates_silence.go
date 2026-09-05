@@ -183,7 +183,14 @@ func estimateNoiseFloorAndThreshold(intervals []IntervalSample, medians silenceM
 // The RMS threshold parameter is used as a hard ceiling - intervals above it
 // cannot be silence regardless of spectral characteristics.
 func findSilenceCandidatesFromIntervals(intervals []IntervalSample, threshold float64, medians silenceMedians) []SilenceRegion {
-	if len(intervals) < minimumSilenceIntervals {
+	return findSilenceCandidatesFromIntervalsWithMinimum(intervals, threshold, medians, minimumSilenceIntervals)
+}
+
+// findSilenceCandidatesFromIntervalsWithMinimum identifies silence regions using
+// a caller-provided minimum duration. Trimming can use a shorter minimum than
+// noise-profile extraction because any region longer than MaxDuration matters.
+func findSilenceCandidatesFromIntervalsWithMinimum(intervals []IntervalSample, threshold float64, medians silenceMedians, minimumIntervals int) []SilenceRegion {
+	if len(intervals) < minimumIntervals {
 		return nil
 	}
 
@@ -224,7 +231,7 @@ func findSilenceCandidatesFromIntervals(intervals []IntervalSample, threshold fl
 				// Too many consecutive interruptions - end silence region
 				// Calculate end time from last silent interval (before interruptions started)
 				lastSilentIdx := i - interruptionCount
-				if silentIntervalCount >= minimumSilenceIntervals && lastSilentIdx >= 0 && lastSilentIdx < len(intervals) {
+				if silentIntervalCount >= minimumIntervals && lastSilentIdx >= 0 && lastSilentIdx < len(intervals) {
 					endTime := intervals[lastSilentIdx].Timestamp + 250*time.Millisecond
 					duration := endTime - silenceStart
 
@@ -243,7 +250,7 @@ func findSilenceCandidatesFromIntervals(intervals []IntervalSample, threshold fl
 	}
 
 	// Handle silence that extends to the end of the recording
-	if inSilence && silentIntervalCount >= minimumSilenceIntervals {
+	if inSilence && silentIntervalCount >= minimumIntervals {
 		// Exclude trailing non-silent interruptions, same as the mid-loop case
 		lastSilentIdx := len(intervals) - 1 - interruptionCount
 		lastSilentIdx = max(lastSilentIdx, 0)

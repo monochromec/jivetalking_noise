@@ -448,8 +448,8 @@ func TestProcessorSeedAndProgressCallbackBoundaries(t *testing.T) {
 			name:        "ProcessAudio",
 			fn:          ProcessAudio,
 			configArg:   1,
-			progressArg: 2,
-			parameters:  3,
+			progressArg: 3,
+			parameters:  4,
 		},
 		{
 			name:        "AnalyzeOnlyDetailed",
@@ -635,7 +635,7 @@ func TestProcessAudio(t *testing.T) {
 	baseFilterOrder := append([]FilterID(nil), config.FilterOrder...)
 
 	// Process the audio with a no-op progress callback
-	result, err := ProcessAudio(testFile, config, func(update ProgressUpdate) {
+	result, err := ProcessAudio(testFile, config, false, func(update ProgressUpdate) {
 		// No-op for tests
 	})
 	if err != nil {
@@ -826,7 +826,7 @@ func TestProcessAudioFinalCollisionPreservesOutputAndCleansTemp(t *testing.T) {
 		processorCreateSiblingTempPath = oldCreateSiblingTempPath
 	})
 
-	firstResult, err := ProcessAudio(testFile, config, nil)
+	firstResult, err := ProcessAudio(testFile, config, false, nil)
 	if err != nil {
 		t.Fatalf("first ProcessAudio() failed: %v", err)
 	}
@@ -839,7 +839,7 @@ func TestProcessAudioFinalCollisionPreservesOutputAndCleansTemp(t *testing.T) {
 		t.Fatalf("failed to read first output: %v", err)
 	}
 
-	secondResult, err := ProcessAudio(testFile, config, nil)
+	secondResult, err := ProcessAudio(testFile, config, false, nil)
 	if err == nil {
 		if secondResult != nil && secondResult.OutputPath != "" {
 			_ = os.Remove(secondResult.OutputPath)
@@ -882,6 +882,62 @@ func TestProcessAudioFinalCollisionPreservesOutputAndCleansTemp(t *testing.T) {
 		if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
 			t.Errorf("processing temp stat error = %v, want not exist after publish/collision", err)
 		}
+	}
+}
+
+func TestProcessAudioForceOverwritesExistingOutput(t *testing.T) {
+	dir := t.TempDir()
+	testFile := generateTestAudio(t, TestAudioOptions{
+		DurationSecs: 1.5,
+		SampleRate:   44100,
+		ToneFreq:     440.0,
+		ToneLevel:    -18.0,
+		NoiseLevel:   -55.0,
+		Dir:          dir,
+	})
+	defer cleanupTestAudio(t, testFile)
+
+	config := newTestBaseConfig()
+	config.Downmix.Enabled = true
+	config.Analysis.Enabled = true
+	config.Resample.Enabled = true
+	config.Loudnorm.Enabled = false
+	config.Adeclick.Enabled = false
+
+	firstResult, err := ProcessAudio(testFile, config, false, nil)
+	if err != nil {
+		t.Fatalf("first ProcessAudio() failed: %v", err)
+	}
+	if firstResult.OutputPath == "" {
+		t.Fatal("first ProcessAudio() returned empty output path")
+	}
+
+	if err := os.Truncate(firstResult.OutputPath, 0); err != nil {
+		t.Fatalf("failed to truncate existing output: %v", err)
+	}
+
+	secondResult, err := ProcessAudio(testFile, config, true, nil)
+	if err != nil {
+		t.Fatalf("second ProcessAudio() failed with force: %v", err)
+	}
+	if secondResult.OutputPath != firstResult.OutputPath {
+		t.Fatalf("second ProcessAudio() output path = %q, want %q", secondResult.OutputPath, firstResult.OutputPath)
+	}
+
+	info, err := os.Stat(secondResult.OutputPath)
+	if err != nil {
+		t.Fatalf("failed to stat overwritten output: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Fatal("overwritten output file is empty")
+	}
+
+	existingBytes, err := os.ReadFile(secondResult.OutputPath)
+	if err != nil {
+		t.Fatalf("failed to read overwritten output: %v", err)
+	}
+	if len(existingBytes) == 0 {
+		t.Fatal("overwritten output file contents are empty")
 	}
 }
 

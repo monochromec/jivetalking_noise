@@ -284,6 +284,15 @@ func AnalyzeAudio(filename string, config *BaseFilterConfig, progressCallback Pr
 	}
 
 	noiseSelection := selectNoiseProfile(measurements, intervals, silenceIntervals, silMedians)
+	if config.SilenceTrim.Enabled && config.SilenceTrim.MaxDuration > 0 && len(measurements.SilenceRegions) == 0 {
+		minimumTrimIntervals := int(config.SilenceTrim.MaxDuration/goldenIntervalSize) + 1
+		measurements.SilenceRegions = findSilenceCandidatesFromIntervalsWithMinimum(
+			silenceIntervals,
+			measurements.SilenceDetectLevel,
+			silMedians,
+			minimumTrimIntervals,
+		)
+	}
 	selectSpeechProfile(measurements, intervals, noiseSelection)
 
 	assignInputMeasurementSuggestions(measurements)

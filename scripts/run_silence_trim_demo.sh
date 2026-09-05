@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARTIFACTS_DIR="$ROOT_DIR/artifacts/silence_trim_demo"
 mkdir -p "$ARTIFACTS_DIR"
+rm -f "$ARTIFACTS_DIR"/jivetalking-test-*
 
 LOGFILE=$(mktemp)
 echo "Running integration test; log -> $LOGFILE"

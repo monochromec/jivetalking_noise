@@ -31,7 +31,7 @@ func BenchmarkProcessAudioDefaultSynthetic5m(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		config := DefaultFilterConfig()
-		result, err := ProcessAudio(inputPath, config, nil)
+		result, err := ProcessAudio(inputPath, config, false, nil)
 		if err != nil {
 			b.Fatalf("ProcessAudio failed: %v", err)
 		}
@@ -56,7 +56,7 @@ func BenchmarkProcessAudioManualFixture(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		config := DefaultFilterConfig()
-		result, err := ProcessAudio(inputPath, config, nil)
+		result, err := ProcessAudio(inputPath, config, false, nil)
 		if err != nil {
 			b.Fatalf("ProcessAudio failed: %v", err)
 		}

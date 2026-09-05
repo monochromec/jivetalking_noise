@@ -15,6 +15,28 @@ import (
 	"github.com/linuxmatters/jivetalking/internal/processor"
 )
 
+func TestDuration_UnmarshalText_ParsesTimeParseDurationFormats(t *testing.T) {
+	cases := []struct {
+		input string
+		want  time.Duration
+	}{
+		{"1s", time.Second},
+		{"500ms", 500 * time.Millisecond},
+		{"2m", 2 * time.Minute},
+		{"0", 0},
+	}
+
+	for _, tc := range cases {
+		var d Duration
+		if err := d.UnmarshalText([]byte(tc.input)); err != nil {
+			t.Fatalf("UnmarshalText(%q) error = %v", tc.input, err)
+		}
+		if got := time.Duration(d); got != tc.want {
+			t.Fatalf("UnmarshalText(%q) = %s, want %s", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestOpenDebugLog_DisabledReturnsNilWithoutCreatingFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 

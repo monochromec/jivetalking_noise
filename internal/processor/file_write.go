@@ -77,3 +77,14 @@ func renameNoClobber(src, dst string) error {
 
 	return nil
 }
+
+func publishTempOutput(src, dst string, force bool) error {
+	if force {
+		// Overwrite existing destination before atomically publishing the temp file.
+		if err := processorRemove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("failed to remove existing output %s: %w", dst, err)
+		}
+	}
+
+	return renameNoClobber(src, dst)
+}

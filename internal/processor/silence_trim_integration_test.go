@@ -32,6 +32,22 @@ func TestSilenceTrimIntegration(t *testing.T) {
 	cfg.SilenceTrim.MaxDuration = 2 * time.Second
 	cfg.Analysis.SilenceScanDuration = 0
 
+	measurements, err := AnalyzeAudio(inputPath, cfg, nil)
+	if err != nil {
+		t.Fatalf("AnalyzeAudio failed: %v", err)
+	}
+	t.Logf("detected silence regions: %+v", measurements.SilenceRegions)
+	if len(measurements.SilenceRegions) == 0 {
+		t.Fatal("expected the synthetic gap to be detected")
+	}
+	region := measurements.SilenceRegions[0]
+	if region.Start < 1500*time.Millisecond || region.Start > 2500*time.Millisecond {
+		t.Fatalf("detected silence starts outside the synthetic gap: %+v", measurements.SilenceRegions)
+	}
+	if region.End < 5500*time.Millisecond || region.End > 6500*time.Millisecond {
+		t.Fatalf("detected silence consumes trailing audio: %+v", measurements.SilenceRegions)
+	}
+
 	// Process the audio
 	result, err := ProcessAudio(inputPath, cfg, true, nil)
 	if err != nil {

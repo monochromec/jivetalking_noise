@@ -56,6 +56,7 @@ func newTestBaseConfig() *BaseFilterConfig {
 			Makeup:    1.0,
 			Detection: "rms",
 		},
+		SilenceTrimConfig{Enabled: false, MaxDuration: 2 * time.Second, Threshold: -50.0},
 		LA2AConfig{
 			Enabled:   false,
 			Threshold: -20,
@@ -97,6 +98,7 @@ func TestFilterFamilyConfigTypesExist(t *testing.T) {
 		{"Deesser", reflect.TypeFor[DeesserConfig]()},
 		{"Adeclick", reflect.TypeFor[AdeclickConfig]()},
 		{"Loudnorm", reflect.TypeFor[LoudnormConfig]()},
+		{"SilenceTrim", reflect.TypeFor[SilenceTrimConfig]()},
 	}
 
 	for _, tt := range tests {
@@ -156,6 +158,9 @@ func TestDefaultFilterConfigComposesTypedDefaults(t *testing.T) {
 	}
 	if config.Loudnorm != defaultLoudnormConfig() {
 		t.Errorf("Loudnorm = %+v, want %+v", config.Loudnorm, defaultLoudnormConfig())
+	}
+	if config.SilenceTrim != defaultSilenceTrimConfig() {
+		t.Errorf("SilenceTrim = %+v, want %+v", config.SilenceTrim, defaultSilenceTrimConfig())
 	}
 }
 
@@ -302,6 +307,19 @@ func TestBuildFilterSpec(t *testing.T) {
 
 		if strings.Contains(spec, "deesser=") {
 			t.Error("De-esser should not appear when intensity is 0")
+		}
+	})
+
+	t.Run("silence trim enabled", func(t *testing.T) {
+		config := newTestConfig()
+		config.SilenceTrim.Enabled = true
+		config.SilenceTrim.MaxDuration = 2 * time.Second
+		config.FilterOrder = []FilterID{FilterSilenceTrim}
+
+		spec := config.BuildFilterSpec()
+
+		if spec != "silenceremove=start_periods=1:start_duration=2.000:start_threshold=-50.0dB:stop_periods=1:stop_duration=2.000:stop_threshold=-50.0dB:start_silence=2.000:stop_silence=2.000" {
+			t.Errorf("unexpected silence trim spec: %q", spec)
 		}
 	})
 

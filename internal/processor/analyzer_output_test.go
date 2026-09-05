@@ -40,6 +40,34 @@ func measureOutputSpeechRegion(outputPath string, region SpeechRegion) (*SpeechC
 	return measureOutputSpeechRegionFromReader(reader, region)
 }
 
+func TestMeasureOutputRegionsSkipsOutOfRangeRegions(t *testing.T) {
+	inputPath := generateTestAudio(t, TestAudioOptions{
+		DurationSecs: 5.0,
+		SampleRate:   44100,
+		ToneFreq:     180.0,
+		ToneLevel:    -18.0,
+		NoiseLevel:   -58.0,
+	})
+	defer cleanupTestAudio(t, inputPath)
+
+	silenceRegion := &SilenceRegion{
+		Start:    10 * time.Second,
+		Duration: 1 * time.Second,
+	}
+	speechRegion := &SpeechRegion{
+		Start:    6 * time.Second,
+		Duration: 1 * time.Second,
+	}
+
+	silenceMetrics, speechMetrics := MeasureOutputRegions(inputPath, silenceRegion, speechRegion)
+	if silenceMetrics != nil {
+		t.Fatalf("expected nil SilenceCandidateMetrics for out-of-range region, got %+v", silenceMetrics)
+	}
+	if speechMetrics != nil {
+		t.Fatalf("expected nil SpeechCandidateMetrics for out-of-range region, got %+v", speechMetrics)
+	}
+}
+
 func TestExtractRegionPair(t *testing.T) {
 	tests := []struct {
 		name         string

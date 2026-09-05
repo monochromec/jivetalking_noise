@@ -217,20 +217,37 @@ func MeasureOutputRegions(outputPath string, silenceRegion *SilenceRegion, speec
 	}
 
 	// Open the output file once for both measurements
-	reader, _, err := audio.OpenAudioFile(outputPath)
+	reader, metadata, err := audio.OpenAudioFile(outputPath)
 	if err != nil {
 		debugLog("Warning: Failed to open output file for region measurements: %v", err)
 		return nil, nil
 	}
 	defer reader.Close()
 
+	// Helper returns true when a region should be measured against the file.
+	regionInRange := func(start time.Duration) bool {
+		if metadata == nil {
+			return true
+		}
+		// Skip regions that begin at or beyond the reported file duration.
+		// The duration is metadata-derived and can be subject to small rounding
+		// differences, so use a tiny tolerance when comparing.
+		const durationTolerance = 5 * time.Millisecond
+		return start < time.Duration(metadata.Duration*float64(time.Second))+durationTolerance
+	}
+
 	// Measure silence region first (if requested)
 	var silenceMetrics *SilenceCandidateMetrics
 	if silenceRegion != nil {
-		silenceMetrics, err = measureOutputSilenceRegionFromReader(reader, *silenceRegion)
-		if err != nil {
-			debugLog("Warning: Failed to measure silence region: %v", err)
-			// Non-fatal - continue to speech measurement
+		if regionInRange(silenceRegion.Start) {
+			silenceMetrics, err = measureOutputSilenceRegionFromReader(reader, *silenceRegion)
+			if err != nil {
+				debugLog("Warning: Failed to measure silence region: %v", err)
+				// Non-fatal - continue to speech measurement
+			}
+		} else {
+			debugLog("Skipping silence region measurement: start %s is beyond output duration %s",
+				silenceRegion.Start, time.Duration(metadata.Duration*float64(time.Second)))
 		}
 	}
 
@@ -244,12 +261,16 @@ func MeasureOutputRegions(outputPath string, silenceRegion *SilenceRegion, speec
 			}
 		}
 
-		speechMetrics, err := measureOutputSpeechRegionFromReader(reader, *speechRegion)
-		if err != nil {
-			debugLog("Warning: Failed to measure speech region: %v", err)
-			return silenceMetrics, nil
+		if regionInRange(speechRegion.Start) {
+			speechMetrics, err := measureOutputSpeechRegionFromReader(reader, *speechRegion)
+			if err != nil {
+				debugLog("Warning: Failed to measure speech region: %v", err)
+				return silenceMetrics, nil
+			}
+			return silenceMetrics, speechMetrics
 		}
-		return silenceMetrics, speechMetrics
+		debugLog("Skipping speech region measurement: start %s is beyond output duration %s",
+			speechRegion.Start, time.Duration(metadata.Duration*float64(time.Second)))
 	}
 
 	return silenceMetrics, nil

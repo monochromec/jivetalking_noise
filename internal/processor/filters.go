@@ -30,7 +30,8 @@ const (
 	// NoiseRemove - anlmdn + compand noise reduction (Pass 2 only)
 	// Non-Local Means denoiser with a compand for residual suppression
 	FilterNoiseRemove FilterID = "noiseremove"
-
+	// Silence trimming filter (Pass 2 only)
+	FilterSilenceTrim FilterID = "silence_trim"
 	// Processing filters (Pass 2 only)
 	FilterLA2ACompressor FilterID = "la2a_compressor" // Teletronix LA-2A style optical compressor
 	FilterDeesser        FilterID = "deesser"
@@ -58,6 +59,7 @@ var Pass1FilterOrder = []FilterID{
 // - Resample: standardises output format (44.1kHz/16-bit/mono) - MUST be last
 var Pass2FilterOrder = []FilterID{
 	FilterDownmix,
+	FilterSilenceTrim,
 	FilterDS201HighPass,
 	FilterDS201LowPass,
 	FilterNoiseRemove,
@@ -111,6 +113,7 @@ type filterConfigDefaults struct {
 	DS201LowPass  DS201LowPassConfig
 	NoiseRemove   NoiseRemoveConfig
 	DS201Gate     DS201GateConfig
+	SilenceTrim   SilenceTrimConfig
 	LA2A          LA2AConfig
 	Deesser       DeesserConfig
 	Adeclick      AdeclickConfig
@@ -122,6 +125,11 @@ type filterConfigDefaults struct {
 	// Filter chain order - controls the sequence of filters in the processing chain
 	// Use Pass2FilterOrder or customise for experimentation
 	FilterOrder []FilterID
+
+	// SilenceRegions holds detected silence regions from Pass 1 analysis.
+	// Populated by processor.go after AdaptConfig; used by buildSilenceTrimFilter.
+	// This is pass-local state, not part of the base configuration.
+	SilenceRegions []*SilenceRegion
 }
 
 type DownmixConfig struct {
@@ -183,6 +191,12 @@ type DS201GateConfig struct {
 	Knee      float64
 	Makeup    float64
 	Detection string
+}
+
+type SilenceTrimConfig struct {
+	Enabled     bool
+	MaxDuration time.Duration
+	Threshold   float64
 }
 
 type LA2AConfig struct {
@@ -292,6 +306,7 @@ var filterBuilders = map[FilterID]filterBuilderFunc{
 	FilterDS201LowPass:   (*EffectiveFilterConfig).buildDS201LowPassFilter,
 	FilterNoiseRemove:    (*EffectiveFilterConfig).buildNoiseRemoveFilter,
 	FilterDS201Gate:      (*EffectiveFilterConfig).buildDS201GateFilter,
+	FilterSilenceTrim:    (*EffectiveFilterConfig).buildSilenceTrimFilter,
 	FilterLA2ACompressor: (*EffectiveFilterConfig).buildLA2ACompressorFilter,
 	FilterDeesser:        (*EffectiveFilterConfig).buildDeesserFilter,
 }
@@ -327,6 +342,7 @@ func defaultFilterConfigDefaults() filterConfigDefaults {
 		defaultDS201LowPassConfig(),
 		defaultNoiseRemoveConfig(),
 		defaultDS201GateConfig(),
+		defaultSilenceTrimConfig(),
 		defaultLA2AConfig(),
 		defaultDeesserConfig(),
 		defaultAdeclickConfig(),
@@ -342,6 +358,7 @@ func assembleFilterDefaults(
 	ds201LowPass DS201LowPassConfig,
 	noiseRemove NoiseRemoveConfig,
 	ds201Gate DS201GateConfig,
+	silenceTrim SilenceTrimConfig,
 	la2a LA2AConfig,
 	deesser DeesserConfig,
 	adeclick AdeclickConfig,
@@ -355,6 +372,7 @@ func assembleFilterDefaults(
 		DS201LowPass:  ds201LowPass,
 		NoiseRemove:   noiseRemove,
 		DS201Gate:     ds201Gate,
+		SilenceTrim:   silenceTrim,
 		LA2A:          la2a,
 		Deesser:       deesser,
 		Adeclick:      adeclick,
@@ -430,6 +448,14 @@ func defaultDS201GateConfig() DS201GateConfig {
 		Knee:      3.0,
 		Makeup:    1.0,
 		Detection: "rms",
+	}
+}
+
+func defaultSilenceTrimConfig() SilenceTrimConfig {
+	return SilenceTrimConfig{
+		Enabled:     false,
+		MaxDuration: 2 * time.Second,
+		Threshold:   -50.0,
 	}
 }
 
@@ -528,7 +554,12 @@ func copyFilterDefaults(dst *EffectiveFilterConfig, src *filterConfigDefaults) {
 	if dst == nil {
 		return
 	}
+	// Preserve existing SilenceRegions before copying
+	silenceRegions := dst.SilenceRegions
+	// Copy the filter defaults
 	*dst = EffectiveFilterConfig(cloneFilterDefaults(src))
+	// Restore SilenceRegions
+	dst.SilenceRegions = silenceRegions
 }
 
 // DbToLinear converts decibel value to linear amplitude.
@@ -627,100 +658,41 @@ func (cfg *EffectiveFilterConfig) buildResampleFilter() string {
 	if !resample.Enabled {
 		return ""
 	}
+
 	if resample.KeepRate {
 		return cfg.buildKeptRateOutputFormatFilter()
 	}
 	return cfg.buildRequiredOutputFormatFilter()
 }
 
-// buildKeptRateOutputFormatFilter builds an output format filter that preserves sample rate.
-// Adjusts only channel layout and sample format, leaving sample rate unchanged.
-func (cfg *EffectiveFilterConfig) buildKeptRateOutputFormatFilter() string {
-	return fmt.Sprintf("aformat=channel_layouts=mono:sample_fmts=%s,asetnsamples=n=%d",
-		cfg.requiredOutputSampleFmt(), cfg.requiredOutputFrameSize())
-}
-
-// buildRequiredOutputFormatFilter builds the mandatory output format filter.
-// Use this when a pass must restore encoder-compatible audio regardless of
-// Resample.Enabled.
+// buildRequiredOutputFormatFilter returns aformat + asetnsamples with explicit sample rate
 func (cfg *EffectiveFilterConfig) buildRequiredOutputFormatFilter() string {
+	rs := cfg.Resample
+	sampleFmt := cfg.Resample.Format
+	if sampleFmt == "" {
+		sampleFmt = cfg.requiredOutputSampleFmt()
+	}
+	frameSize := cfg.requiredOutputFrameSize()
 	return fmt.Sprintf("aformat=sample_rates=%d:channel_layouts=mono:sample_fmts=%s,asetnsamples=n=%d",
-		cfg.Resample.SampleRate, cfg.requiredOutputSampleFmt(), cfg.requiredOutputFrameSize())
+		rs.SampleRate,
+		sampleFmt,
+		frameSize,
+	)
 }
 
-func (cfg *EffectiveFilterConfig) requiredOutputSampleFmt() string {
-	switch strings.ToLower(cfg.OutputFormat) {
-	case "mp3":
-		switch strings.ToLower(cfg.Resample.Format) {
-		case "s32":
-			return "s32p"
-		case "fltp":
-			return "fltp"
-		default:
-			return "s16p"
-		}
-	default:
-		return cfg.Resample.Format
+// buildKeptRateOutputFormatFilter returns aformat + asetnsamples but preserves sample rate
+func (cfg *EffectiveFilterConfig) buildKeptRateOutputFormatFilter() string {
+	sampleFmt := cfg.Resample.Format
+	if sampleFmt == "" {
+		sampleFmt = cfg.requiredOutputSampleFmt()
 	}
+	frameSize := cfg.requiredOutputFrameSize()
+	return fmt.Sprintf("aformat=channel_layouts=mono:sample_fmts=%s,asetnsamples=n=%d",
+		sampleFmt,
+		frameSize,
+	)
 }
 
-func (cfg *EffectiveFilterConfig) requiredOutputFrameSize() int {
-	switch strings.ToLower(cfg.OutputFormat) {
-	case "mp3":
-		return 1152
-	default:
-		return cfg.Resample.FrameSize
-	}
-}
-
-// buildDS201HighpassFilter builds the DS201-inspired high-pass filter.
-// Removes subsonic rumble (HVAC, handling noise, etc.) before gating.
-//
-// The DS201's frequency-conscious gating uses side-chain HP/LP filters to prevent
-// false triggers. Since FFmpeg doesn't support side-chain filtering, we apply
-// frequency filtering to the audio path before gating to achieve the same effect.
-//
-// Parameters:
-// - frequency: cutoff frequency in Hz (adaptive: 60-120Hz based on voice)
-// - poles: 1=6dB/oct (gentle), 2=12dB/oct (standard)
-// - width: Q factor (0.707=Butterworth, lower=gentler for warm voices)
-// - transform: filter algorithm (tdii=best floating-point accuracy)
-// - mix: wet/dry blend (1.0=full filter, 0.7=subtle for warm voices)
-func (cfg *EffectiveFilterConfig) buildDS201HighpassFilter() string {
-	highpass := cfg.DS201HighPass
-	if !highpass.Enabled {
-		return ""
-	}
-
-	poles := highpass.Poles
-	if poles < 1 {
-		poles = 2 // Default to standard 12dB/oct
-	}
-
-	width := highpass.Width
-	if width <= 0 {
-		width = 0.707 // Butterworth default
-	}
-
-	hpSpec := fmt.Sprintf("highpass=f=%.0f:poles=%d:width_type=q:width=%.3f:normalize=1",
-		highpass.Frequency, poles, width)
-
-	// Add transform type if specified (tdii = best floating-point accuracy)
-	if highpass.Transform != "" {
-		hpSpec += fmt.Sprintf(":a=%s", highpass.Transform)
-	}
-
-	// Add mix parameter if not full wet (for warm voice protection)
-	if highpass.Mix > 0 && highpass.Mix < 1.0 {
-		hpSpec += fmt.Sprintf(":m=%.2f", highpass.Mix)
-	}
-
-	return hpSpec
-}
-
-// buildDS201LowPassFilter builds the DS201-inspired low-pass filter specification.
-// Part of the DS201 frequency-conscious filtering chain, placed after highpass.
-//
 // Purpose: Remove ultrasonic content that could trigger false gate openings.
 // The Drawmer DS201 includes LP filtering in its side-chain to focus gate detection
 // on voice frequencies rather than high-frequency noise artifacts.
@@ -765,6 +737,66 @@ func (cfg *EffectiveFilterConfig) buildDS201LowPassFilter() string {
 	return lpSpec
 }
 
+// buildDS201HighpassFilter builds the DS201 highpass specification.
+func (cfg *EffectiveFilterConfig) buildDS201HighpassFilter() string {
+	hp := cfg.DS201HighPass
+	if !hp.Enabled {
+		return ""
+	}
+
+	poles := hp.Poles
+	if poles < 1 {
+		poles = 2
+	}
+	width := hp.Width
+	if width <= 0 {
+		width = ds201HPDefaultWidth
+	}
+
+	spec := fmt.Sprintf("highpass=f=%.0f:poles=%d:width_type=q:width=%.3f:normalize=1",
+		hp.Frequency, poles, width)
+
+	if hp.Transform != "" {
+		spec += fmt.Sprintf(":a=%s", hp.Transform)
+	}
+	if hp.Mix > 0 && hp.Mix < 1.0 {
+		spec += fmt.Sprintf(":m=%.2f", hp.Mix)
+	}
+
+	return spec
+}
+
+// requiredOutputSampleFmt returns the sample format string required for the
+// chosen output container/codec. Defaults to planar for codecs like mp3.
+func (cfg *EffectiveFilterConfig) requiredOutputSampleFmt() string {
+	of := strings.ToLower(cfg.OutputFormat)
+	switch of {
+	case "mp3":
+		return "s16p"
+	case "flac", "wav", "flac16":
+		return "s16"
+	default:
+		if cfg.Resample.Format != "" {
+			return cfg.Resample.Format
+		}
+		return "s16"
+	}
+}
+
+// requiredOutputFrameSize returns the frame size used for output encoder chunks.
+func (cfg *EffectiveFilterConfig) requiredOutputFrameSize() int {
+	of := strings.ToLower(cfg.OutputFormat)
+	switch of {
+	case "mp3":
+		return 1152
+	default:
+		if cfg.Resample.FrameSize > 0 {
+			return cfg.Resample.FrameSize
+		}
+		return 4096
+	}
+}
+
 // buildNoiseRemoveFilter builds the anlmdn+compand noise reduction filter.
 // Non-Local Means denoiser followed by a compand for residual suppression.
 // Runs at the source sample rate; downstream filters (gate, LA-2A, de-esser,
@@ -800,7 +832,19 @@ func (cfg *EffectiveFilterConfig) buildNoiseRemoveFilter() string {
 		filters = append(filters, cfg.buildNoiseRemoveCompandFilter())
 	}
 
-	return strings.Join(filters, ",")
+	if len(filters) == 0 {
+		return ""
+	}
+
+	spec := filters[0]
+	for _, filter := range filters[1:] {
+		separator := ","
+		if strings.Contains(spec, "[silence_trimmed]") {
+			separator = ";"
+		}
+		spec += separator + filter
+	}
+	return spec
 }
 
 // buildNoiseRemoveCompandFilter builds the compand filter for residual noise suppression.
@@ -895,6 +939,93 @@ func (cfg *EffectiveFilterConfig) buildDeesserFilter() string {
 	)
 }
 
+func (cfg *EffectiveFilterConfig) buildSilenceTrimFilter() string {
+	trim := cfg.SilenceTrim
+	if !trim.Enabled || trim.MaxDuration <= 0 {
+		return ""
+	}
+
+	leaveSeconds := trim.MaxDuration.Seconds()
+	threshold := trim.Threshold
+	if threshold == 0 {
+		threshold = -50.0
+	}
+
+	// If we don't have per-file silence regions from analysis, fall back to
+	// the deterministic silenceremove spec to keep tests and simple cases stable.
+	if len(cfg.SilenceRegions) == 0 {
+		return fmt.Sprintf(
+			"silenceremove=start_periods=1:start_duration=%.3f:start_threshold=%.1fdB:"+
+				"stop_periods=1:stop_duration=%.3f:stop_threshold=%.1fdB:start_silence=%.3f:stop_silence=%.3f",
+			leaveSeconds,
+			threshold,
+			leaveSeconds,
+			threshold,
+			leaveSeconds,
+			leaveSeconds,
+		)
+	}
+
+	// Build segmented atrim + concat graph based on measured silence regions.
+	maxSeconds := trim.MaxDuration.Seconds()
+
+	var parts []string
+	var segLabels []string
+	segIdx := 0
+	lastEnd := 0.0
+
+	for _, region := range cfg.SilenceRegions {
+		rs := region.Start.Seconds()
+		re := region.End.Seconds()
+
+		// Add preceding non-silence audio (if any)
+		if rs > lastEnd {
+			parts = append(parts, fmt.Sprintf("[src%d]atrim=start=%f:end=%f,asetpts=PTS-STARTPTS[seg%d]",
+				segIdx, lastEnd, rs, segIdx))
+			segLabels = append(segLabels, fmt.Sprintf("[seg%d]", segIdx))
+			segIdx++
+		}
+
+		// Add silence segment (possibly truncated)
+		silenceDur := re - rs
+		if silenceDur <= 0 {
+			lastEnd = re
+			continue
+		}
+		if silenceDur > maxSeconds {
+			// Truncate silence to maxSeconds
+			parts = append(parts, fmt.Sprintf("[src%d]atrim=start=%f:end=%f,asetpts=PTS-STARTPTS[seg%d]",
+				segIdx, rs, rs+maxSeconds, segIdx))
+			segLabels = append(segLabels, fmt.Sprintf("[seg%d]", segIdx))
+			segIdx++
+		} else {
+			parts = append(parts, fmt.Sprintf("[src%d]atrim=start=%f:end=%f,asetpts=PTS-STARTPTS[seg%d]",
+				segIdx, rs, re, segIdx))
+			segLabels = append(segLabels, fmt.Sprintf("[seg%d]", segIdx))
+			segIdx++
+		}
+		lastEnd = re
+	}
+
+	// Add trailing audio from lastEnd to EOF
+	parts = append(parts, fmt.Sprintf("[src%d]atrim=start=%f,asetpts=PTS-STARTPTS[seg%d]",
+		segIdx, lastEnd, segIdx))
+	segLabels = append(segLabels, fmt.Sprintf("[seg%d]", segIdx))
+	segIdx++
+
+	// Build concat invocation
+	sourceLabels := make([]string, len(parts))
+	for i := range sourceLabels {
+		sourceLabels[i] = fmt.Sprintf("[src%d]", i)
+	}
+	split := fmt.Sprintf("[in]asplit=%d%s", len(sourceLabels), strings.Join(sourceLabels, ""))
+	segmentDefs := split + ";" + strings.Join(parts, ";")
+	concatInputs := strings.Join(segLabels, "")
+	concatSpec := fmt.Sprintf("%sconcat=n=%d:v=0:a=1[silence_trimmed]", concatInputs, len(segLabels))
+
+	return segmentDefs + ";" + concatSpec
+}
+
 // buildAdeclickFilter builds the click/pop repair filter specification.
 // Uses interpolation to repair waveform discontinuities.
 // Applied in Pass 4 after loudnorm to catch clicks from limiter and gain changes.
@@ -936,15 +1067,41 @@ func (cfg *EffectiveFilterConfig) BuildFilterSpec() string {
 
 	// Build filters in specified order, skipping disabled/empty
 	var filters []string
+	silenceTrimGraph := false
 	for _, id := range order {
 		if builder, ok := filterBuilders[id]; ok {
 			if spec := builder(cfg); spec != "" {
+				if id == FilterSilenceTrim && strings.HasPrefix(spec, "[in]") {
+					if len(filters) > 0 {
+						filters = []string{"[in]" + strings.Join(filters, ",") + "[trim_input]"}
+						spec = strings.Replace(spec, "[in]asplit=", "[trim_input]asplit=", 1)
+					}
+					filters = append(filters, spec)
+					silenceTrimGraph = true
+					continue
+				}
+				if silenceTrimGraph {
+					spec = "[silence_trimmed]" + spec
+					silenceTrimGraph = false
+				}
 				filters = append(filters, spec)
 			}
 		}
 	}
 
-	return strings.Join(filters, ",")
+	if len(filters) == 0 {
+		return ""
+	}
+
+	result := filters[0]
+	for _, filter := range filters[1:] {
+		separator := ","
+		if strings.HasPrefix(filter, "[trim_input]") || strings.HasPrefix(filter, "[silence_trimmed]") {
+			separator = ";"
+		}
+		result += separator + filter
+	}
+	return result
 }
 
 func (cfg *BaseFilterConfig) BuildFilterSpec() string {
