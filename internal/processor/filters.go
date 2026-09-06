@@ -1098,7 +1098,7 @@ func (cfg *EffectiveFilterConfig) BuildFilterSpec() string {
 		if strings.HasPrefix(filter, "[trim_input]") || strings.HasPrefix(filter, "[silence_trimmed]") {
 			separator = ";"
 		}
-		result += separator + filter
+		result = strings.Join(filters, separator)
 	}
 	return result
 }

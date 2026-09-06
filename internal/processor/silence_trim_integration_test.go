@@ -3,6 +3,7 @@ package processor
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -74,5 +75,10 @@ func TestSilenceTrimIntegration(t *testing.T) {
 	// Write a small marker file to make it easy for external scripts to find
 	// the generated artifacts when running the demo.
 	marker := fmt.Sprintf("%s\n%s\n", inputPath, result.OutputPath)
-	_ = os.WriteFile("/tmp/jivetalking_silence_trim_demo_paths.txt", []byte(marker), 0644)
+	// t.TempDir() creates a unique, isolated temp directory for the test duration
+	tmpFile := filepath.Join(t.TempDir(), "jivetalking_silence_trim_demo_paths.txt")
+	err = os.WriteFile(tmpFile, []byte(marker), 0600)
+	if err != nil {
+		t.Fatalf("failed to write file: %v", err)
+	}
 }

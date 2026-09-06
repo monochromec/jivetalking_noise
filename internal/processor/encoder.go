@@ -66,6 +66,7 @@ func createOutputEncoder(outputPath string, _ *audio.Metadata, bufferSinkCtx *ff
 		return nil, fmt.Errorf("failed to get sample format: %w", err)
 	}
 
+	//nolint:gosec
 	sampleFmt := ffmpeg.AVSampleFormat(sampleFmtInt)
 	if sampleFmt == ffmpeg.AVSampleFmtNone {
 		ffmpeg.AVCodecFreeContext(&encCtx)

@@ -49,7 +49,8 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	return nil
 }
 
-func (d *Duration) Decode(ctx *kong.DecodeContext, value string) error {
+// func (d *Duration) Decode(ctx *kong.DecodeContext, value string) error {
+func (d *Duration) Decode(value string) error {
 	return d.UnmarshalText([]byte(value))
 }
 
