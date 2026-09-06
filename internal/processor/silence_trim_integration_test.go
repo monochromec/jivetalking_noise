@@ -76,8 +76,12 @@ func TestSilenceTrimIntegration(t *testing.T) {
 	// the generated artifacts when running the demo.
 	marker := fmt.Sprintf("%s\n%s\n", inputPath, result.OutputPath)
 	// t.TempDir() creates a unique, isolated temp directory for the test duration
+	// t.TempDir() creates a unique, isolated temp directory for the test duration
 	tmpFile := filepath.Join(t.TempDir(), "jivetalking_silence_trim_demo_paths.txt")
 	err = os.WriteFile(tmpFile, []byte(marker), 0600)
+	if err != nil {
+		t.Fatalf("failed to write file: %v", err)
+	}
 	if err != nil {
 		t.Fatalf("failed to write file: %v", err)
 	}
